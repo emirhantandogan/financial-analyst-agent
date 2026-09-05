@@ -4,7 +4,7 @@ from app.graph import create_graph
 def main():
     graph = create_graph()
 
-    query = input("Ask FinSight: ").strip()
+    query = input("Ask Finance Bot: ").strip()
 
     result = graph.invoke(
         {

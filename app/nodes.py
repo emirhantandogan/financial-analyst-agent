@@ -107,12 +107,12 @@ def planner_node(state: State):
         "planner_summary": result.plan_summary,
     }
 
-def data_retrieval_node(state: State):
-    print("[data_retrieval_node executed]")
+def financial_data_node(state: State):
+    print("[financial_data_node started]")
 
     ticker = state["ticker"]
 
-    fake_financial_data = {
+    financial_data = {
         "ticker": ticker,
         "revenue": 100_000_000,
         "eps": 2.15,
@@ -121,66 +121,128 @@ def data_retrieval_node(state: State):
     }
 
     return {
-        "financial_data": fake_financial_data,
-        "news": [
-            {
-                "title": f"Sample news for {ticker}"
-            }
-        ],
-        "transcript": "Management stated they are optimistic about the next quarter.",
-        "sec_filing": "The company highlighted certain operational risks.",
+        "financial_data": financial_data
+    }
+
+def news_node(state: State):
+    print("[news_node started]")
+
+    ticker = state["ticker"]
+
+    news = [
+        {
+            "title": f"Example recent news article for {ticker}",
+            "source": "Example News",
+        }
+    ]
+
+    return {
+        "news": news
+    }
+
+def transcript_node(state: State):
+    print("[transcript_node started]")
+
+    ticker = state["ticker"]
+
+    transcript = (
+        f"Example earnings call transcript for {ticker}. "
+        "Management expressed optimism about the next quarter."
+    )
+
+    return {
+        "transcript": transcript
+    }
+
+def sec_filing_node(state: State):
+    print("[sec_filing_node started]")
+
+    ticker = state["ticker"]
+
+    sec_filing = (
+        f"Example SEC filing for {ticker}. "
+        "The company highlighted several operational and financial risks."
+    )
+
+    return {
+        "sec_filing": sec_filing
     }
 
 
-def financial_analyst_node(state: State):
-    print("[financial_analyst_node executed]")
+def retrieval_complete_node(state: State):
+    print("[retrieval_complete_node started]")
 
-    financial_data = state["financial_data"]
+    return {}
+
+
+def financial_analyst_node(state: State):
+    print("[financial_analyst_node started]")
+
+    financial_data = state.get("financial_data")
+
+    if financial_data is None:
+        return {
+            "financial_analysis": (
+                "Financial analysis was skipped because financial metrics were not requested."
+            )
+        }
 
     analysis = (
-        f"EPS for {financial_data['ticker']} "
-        f"was reported as {financial_data['eps']}."
+        f"{financial_data['ticker']} reported EPS of {financial_data['eps']}."
     )
 
     return {
         "financial_analysis": analysis
     }
 
-
 def risk_assessment_node(state: State):
-    print("[risk_assessment_node executed]")
+    print("[risk_assessment_node started]")
 
-    debt_to_ebitda = state["financial_data"]["debt_to_ebitda"]
+    financial_data = state.get("financial_data")
+    sec_filing = state.get("sec_filing")
 
-    risk_analysis = (
-        f"Debt-to-EBITDA ratio is {debt_to_ebitda}. "
-        "Generated sample risk analysis for now."
-    )
+    if financial_data is None and sec_filing is None:
+        return {
+            "risk_analysis": (
+                "Risk analysis was skipped because risk-related data was not requested."
+            )
+        }
+
+    risk_parts = []
+
+    if financial_data is not None:
+        debt_to_ebitda = financial_data["debt_to_ebitda"]
+
+        risk_parts.append(
+            f"Debt-to-EBITDA is {debt_to_ebitda}."
+        )
+
+    if sec_filing is not None:
+        risk_parts.append(
+            f"SEC filing data: {sec_filing}"
+        )
 
     return {
-        "risk_analysis": risk_analysis
+        "risk_analysis": " ".join(risk_parts)
     }
-
 
 def report_generator_node(state: State):
     print("[report_generator_node executed]")
 
     report = f"""
-# FinSight Report
+    # FinSight Report
 
-## Company
+    ## Company
 
-{state["ticker"]}
+    {state["ticker"]}
 
-## Financial Analysis
+    ## Financial Analysis
 
-{state["financial_analysis"]}
+    {state["financial_analysis"]}
 
-## Risk Analysis
+    ## Risk Analysis
 
-{state["risk_analysis"]}
-"""
+    {state["risk_analysis"]}
+    """
 
-    return {
-        "final_report": report
-    }
+    return {"final_report": report}
