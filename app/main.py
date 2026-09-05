@@ -4,16 +4,11 @@ from app.graph import create_graph
 def main():
     graph = create_graph()
 
-    ticker = input("Ticker gir: ").strip().upper()
-
-    query = input(
-        "FinSight'a sorun: "
-    ).strip()
+    query = input("Ask FinSight: ").strip()
 
     result = graph.invoke(
         {
-            "ticker": ticker,
-            "user_query": query,
+            "user_query": query
         }
     )
 

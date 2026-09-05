@@ -7,6 +7,13 @@ class State(TypedDict, total=False):  # Workflow state schema (total=False: all 
 
     plan: list[str]  # Ordered execution steps for the workflow
 
+    needs_financials: bool
+    needs_news: bool
+    needs_transcript: bool
+    needs_sec_filing: bool
+
+    planner_summary: str
+
     financial_data: dict  # Parsed financial statements, ratios, and numeric metrics
     news: list[dict]  # Scraped market news articles and sentiment metadata
     transcript: str  # Text transcript of earnings conference calls
