@@ -1,14 +1,19 @@
+import json
+
 from app.state import State
 from app.llm import create_llm
 from app.schemas import PlannerDecision
 from app.state import State
+from app.tools.company_news import fetch_company_news
 from app.tools.financial_metrics import get_financial_metrics
-
-llm = create_llm()
-planner_llm = llm.with_structured_output(
+from app.tools.article_content import fetch_article_content
+from app.tools.company_news import fetch_company_news
+from app.schemas import (
+    FinancialAnalysisResult,
     PlannerDecision,
-    method="json_schema",
 )
+
+MAX_ARTICLES_WITH_FULL_CONTENT = 3
 
 PLANNER_SYSTEM_PROMPT = """
 You are the planning component of Finance Bot, a financial research and risk analysis agent.
@@ -59,6 +64,42 @@ Select only the data sources that are necessary.
 Do not answer the user's financial question.
 Only produce the planning decision.
 """
+
+FINANCIAL_ANALYST_SYSTEM_PROMPT = """
+You are the financial analysis component of FinSight.
+
+Your job is to analyze the evidence collected by the system and explain what it means.
+
+You may receive:
+- financial metrics
+- analyst consensus estimates
+- recent news summaries
+- full article content
+
+Follow these rules:
+
+1. Use only the evidence provided in the input.
+2. Do not invent financial figures, events, or management statements.
+3. Separate confirmed facts from interpretation.
+4. If the evidence is insufficient to explain a market movement, say so clearly.
+5. When financial results are available, compare actual results with analyst expectations.
+6. When news is available, identify the most plausible catalysts supported by the articles.
+7. Do not assume that correlation proves causation.
+8. Prefer full article content over headlines when they conflict.
+9. Treat search-result summaries as weaker evidence than full article content.
+10. Keep the analysis concise and decision-oriented.
+"""
+
+llm = create_llm()
+planner_llm = llm.with_structured_output(
+    PlannerDecision,
+    method="json_schema",
+)
+
+financial_analyst_llm = llm.with_structured_output(
+    FinancialAnalysisResult,
+    method="json_schema",
+)
 
 def planner_node(state: State):
     print("\n[planner_node started]")
@@ -126,15 +167,49 @@ def news_node(state: State):
 
     ticker = state["ticker"]
 
-    news = [
-        {
-            "title": f"Example recent news article for {ticker}",
-            "source": "Example News",
-        }
-    ]
+    news = fetch_company_news(
+        ticker=ticker,
+        hours_back=24,
+    )
+
+    enriched_news = []
+
+    for index, article in enumerate(news):
+        enriched_article = dict(article)
+
+        if index < MAX_ARTICLES_WITH_FULL_CONTENT:
+            url = article.get("url")
+
+            content = fetch_article_content(
+                url=url,
+            )
+
+            enriched_article["content"] = content
+
+        else:
+            enriched_article["content"] = None
+
+        enriched_news.append(
+            enriched_article
+        )
+
+    full_content_count = sum(
+        1
+        for article in enriched_news
+        if article.get("content")
+    )
+
+    print(
+        f"Retrieved {len(enriched_news)} news articles."
+    )
+
+    print(
+        f"Fetched full content for "
+        f"{full_content_count} articles."
+    )
 
     return {
-        "news": news
+        "news": enriched_news
     }
 
 def transcript_node(state: State):
@@ -172,66 +247,95 @@ def retrieval_complete_node(state: State):
     return {}
 
 
-def financial_analyst_node(state: State):
+def financial_analyst_node(
+    state: State,
+):
     print("[financial_analyst_node started]")
 
-    financial_data = state.get("financial_data")
+    financial_data = state.get(
+        "financial_data"
+    )
 
-    if financial_data is None:
+    news = state.get(
+        "news",
+        [],
+    )
+
+    if financial_data is None and not news:
         return {
             "financial_analysis": (
                 "Financial analysis was skipped because "
-                "financial metrics were not requested."
+                "no relevant financial or news data was available."
             )
         }
 
-    ticker = financial_data["ticker"]
+    analysis_context = {
+        "user_query": state["user_query"],
+        "ticker": state["ticker"],
+        "financial_data": financial_data,
+        "news": _build_news_context(
+            news
+        ),
+    }
 
-    latest_revenue = financial_data.get(
-        "latest_quarter_revenue"
+    result = financial_analyst_llm.invoke(
+        [
+            (
+                "system",
+                FINANCIAL_ANALYST_SYSTEM_PROMPT,
+            ),
+            (
+                "human",
+                json.dumps(
+                    analysis_context,
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            ),
+        ]
     )
 
-    actual_eps = financial_data.get(
-        "latest_reported_eps"
+    key_findings = "\n".join(
+        f"- {finding}"
+        for finding in result.key_findings
     )
 
-    estimated_eps = financial_data.get(
-        "latest_eps_estimate"
+    confirmed_facts = "\n".join(
+        f"- {fact}"
+        for fact in result.confirmed_facts
     )
 
-    surprise_percent = financial_data.get(
-        "latest_eps_surprise_percent"
+    inferences = "\n".join(
+        f"- {inference}"
+        for inference in result.inferences
     )
 
-    analysis_parts = [
-        f"Financial metrics were retrieved for {ticker}."
-    ]
+    financial_analysis = f"""
+        ### Summary
 
-    if latest_revenue is not None:
-        analysis_parts.append(
-            f"Latest quarterly revenue: {latest_revenue:,.0f}."
-        )
+        {result.summary}
 
-    if actual_eps is not None:
-        analysis_parts.append(
-            f"Latest reported EPS: {actual_eps:.2f}."
-        )
+        ### Key Findings
 
-    if estimated_eps is not None:
-        analysis_parts.append(
-            f"Consensus EPS estimate: {estimated_eps:.2f}."
-        )
+        {key_findings}
 
-    if surprise_percent is not None:
-        analysis_parts.append(
-            f"EPS surprise: {surprise_percent:.2f}%."
-        )
+        ### Market Reaction
+
+        {result.market_reaction_explanation}
+
+        ### Confirmed Facts
+
+        {confirmed_facts}
+
+        ### Inferences
+
+        {inferences}
+        """.strip()
 
     return {
-        "financial_analysis": " ".join(
-            analysis_parts
-        )
+        "financial_analysis": financial_analysis
     }
+
 def risk_assessment_node(state: State):
     print("[risk_assessment_node started]")
 
@@ -274,22 +378,109 @@ def risk_assessment_node(state: State):
     }
 
 def report_generator_node(state: State):
-    print("[report_generator_node executed]")
+    print("[report_generator_node started]")
+
+    news = state.get(
+        "news",
+        [],
+    )
+
+    if news:
+        news_lines = []
+
+        for article in news:
+            title = (
+                article.get("title")
+                or "Untitled article"
+            )
+
+            source = (
+                article.get("source")
+                or "Unknown source"
+            )
+
+            published_at = (
+                article.get("published_at")
+                or "Unknown publication time"
+            )
+
+            url = article.get("url")
+
+            line = (
+                f"- **{title}**\n"
+                f"  Source: {source}\n"
+                f"  Published: {published_at}"
+            )
+
+            if url:
+                line += f"\n  URL: {url}"
+
+            news_lines.append(line)
+
+        news_section = "\n\n".join(
+            news_lines
+        )
+
+    else:
+        news_section = (
+            "No recent news was retrieved."
+        )
+
+    financial_analysis = state.get(
+        "financial_analysis",
+        "Financial analysis was not generated.",
+    )
+
+    risk_analysis = state.get(
+        "risk_analysis",
+        "Risk analysis was not generated.",
+    )
 
     report = f"""
-    # Finance Bot Report
+    # FinSight Report
 
     ## Company
 
     {state["ticker"]}
 
+    ## Planner Summary
+
+    {state["planner_summary"]}
+
+    ## Retrieved News
+
+    {news_section}
+
     ## Financial Analysis
 
-    {state["financial_analysis"]}
+    {financial_analysis}
 
     ## Risk Analysis
 
-    {state["risk_analysis"]}
+    {risk_analysis}
     """
 
-    return {"final_report": report}
+    return {
+        "final_report": report
+    }
+
+
+def _build_news_context(
+    news: list[dict],
+) -> list[dict]:
+    news_context = []
+
+    for article in news:
+        news_context.append(
+            {
+                "title": article.get("title"),
+                "source": article.get("source"),
+                "published_at": article.get(
+                    "published_at"
+                ),
+                "summary": article.get("summary"),
+                "content": article.get("content"),
+            }
+        )
+
+    return news_context
