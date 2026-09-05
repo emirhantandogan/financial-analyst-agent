@@ -2,6 +2,7 @@ from app.state import State
 from app.llm import create_llm
 from app.schemas import PlannerDecision
 from app.state import State
+from app.tools.financial_metrics import get_financial_metrics
 
 llm = create_llm()
 planner_llm = llm.with_structured_output(
@@ -112,13 +113,9 @@ def financial_data_node(state: State):
 
     ticker = state["ticker"]
 
-    financial_data = {
-        "ticker": ticker,
-        "revenue": 100_000_000,
-        "eps": 2.15,
-        "pe_ratio": 24.3,
-        "debt_to_ebitda": 1.8,
-    }
+    financial_data = get_financial_metrics(
+        ticker=ticker
+    )
 
     return {
         "financial_data": financial_data
@@ -183,18 +180,58 @@ def financial_analyst_node(state: State):
     if financial_data is None:
         return {
             "financial_analysis": (
-                "Financial analysis was skipped because financial metrics were not requested."
+                "Financial analysis was skipped because "
+                "financial metrics were not requested."
             )
         }
 
-    analysis = (
-        f"{financial_data['ticker']} reported EPS of {financial_data['eps']}."
+    ticker = financial_data["ticker"]
+
+    latest_revenue = financial_data.get(
+        "latest_quarter_revenue"
     )
 
-    return {
-        "financial_analysis": analysis
-    }
+    actual_eps = financial_data.get(
+        "latest_reported_eps"
+    )
 
+    estimated_eps = financial_data.get(
+        "latest_eps_estimate"
+    )
+
+    surprise_percent = financial_data.get(
+        "latest_eps_surprise_percent"
+    )
+
+    analysis_parts = [
+        f"Financial metrics were retrieved for {ticker}."
+    ]
+
+    if latest_revenue is not None:
+        analysis_parts.append(
+            f"Latest quarterly revenue: {latest_revenue:,.0f}."
+        )
+
+    if actual_eps is not None:
+        analysis_parts.append(
+            f"Latest reported EPS: {actual_eps:.2f}."
+        )
+
+    if estimated_eps is not None:
+        analysis_parts.append(
+            f"Consensus EPS estimate: {estimated_eps:.2f}."
+        )
+
+    if surprise_percent is not None:
+        analysis_parts.append(
+            f"EPS surprise: {surprise_percent:.2f}%."
+        )
+
+    return {
+        "financial_analysis": " ".join(
+            analysis_parts
+        )
+    }
 def risk_assessment_node(state: State):
     print("[risk_assessment_node started]")
 
@@ -204,22 +241,32 @@ def risk_assessment_node(state: State):
     if financial_data is None and sec_filing is None:
         return {
             "risk_analysis": (
-                "Risk analysis was skipped because risk-related data was not requested."
+                "Risk analysis was skipped because "
+                "risk-related data was not requested."
             )
         }
 
     risk_parts = []
 
     if financial_data is not None:
-        debt_to_ebitda = financial_data["debt_to_ebitda"]
-
-        risk_parts.append(
-            f"Debt-to-EBITDA is {debt_to_ebitda}."
+        debt_to_ebitda = financial_data.get(
+            "debt_to_ebitda"
         )
+
+        if debt_to_ebitda is not None:
+            risk_parts.append(
+                f"Debt-to-EBITDA is "
+                f"{debt_to_ebitda:.2f}."
+            )
 
     if sec_filing is not None:
         risk_parts.append(
             f"SEC filing data: {sec_filing}"
+        )
+
+    if not risk_parts:
+        risk_parts.append(
+            "No usable risk metrics were available."
         )
 
     return {
@@ -230,7 +277,7 @@ def report_generator_node(state: State):
     print("[report_generator_node executed]")
 
     report = f"""
-    # FinSight Report
+    # Finance Bot Report
 
     ## Company
 
